@@ -126,10 +126,7 @@ class BaseAWQForCausalLM(nn.Module):
 
         layers[0] = layers[0].cuda()
         self.move_embed(self.model, "cuda")
-        
-        # get input and kwargs to layer 0
-        # with_kwargs is only supported in PyTorch 2.0
-        # use this Catcher hack for now
+
         class Catcher(nn.Module):
             def __init__(self, module):
                 super().__init__()
@@ -152,7 +149,7 @@ class BaseAWQForCausalLM(nn.Module):
 
         layers[0] = layers[0].cpu()
         self.move_embed(self.model, "cpu")
-        
+
         gc.collect()
         torch.cuda.empty_cache()
         awq_results = {
@@ -201,11 +198,13 @@ class BaseAWQForCausalLM(nn.Module):
                 apply_scale(layers[i], scales_list, input_feat_dict=input_feat)
 
                 # append prefix to make names global
-                awq_results["scale"] += append_str_prefix(scales_list, get_op_name(self.model, layer) + ".")
+                awq_results["scale"] += append_str_prefix(
+                    scales_list, f"{get_op_name(self.model, layer)}."
+                )
 
             # Clear GPU memory
             torch.cuda.empty_cache()
-            
+
             if mse_range:
                 clip_list = auto_clip_block(
                     layer,
@@ -215,14 +214,16 @@ class BaseAWQForCausalLM(nn.Module):
 
                 apply_clip(layer, clip_list)
                 # append prefix to make names global
-                awq_results["clip"] += append_str_prefix(clip_list, get_op_name(self.model, layer) + ".")
+                awq_results["clip"] += append_str_prefix(
+                    clip_list, f"{get_op_name(self.model, layer)}."
+                )
 
             layer = layer.cpu()
             # Haotian: check activation replacement
             del input_feat
             gc.collect()
             torch.cuda.empty_cache()
-        
+
         return awq_results
 
     def save_quantized(self, save_dir, safetensors=False, shard_size="10GB"):
@@ -277,25 +278,21 @@ class BaseAWQForCausalLM(nn.Module):
             _save_files(save_dir, model_name, self.search_result)
         
     @classmethod
-    def from_pretrained(self, model_path, model_type, torch_dtype: torch.dtype = torch.float16, 
-                        trust_remote_code=True, safetensors=False):
-        return self.from_quantized(
-            model_path, 
-            model_type, 
-            model_filename='', 
+    def from_pretrained(cls, model_path, model_type, torch_dtype: torch.dtype = torch.float16, trust_remote_code=True, safetensors=False):
+        return cls.from_quantized(
+            model_path,
+            model_type,
+            model_filename='',
             max_new_tokens=None,
-            device='balanced', 
-            torch_dtype=torch_dtype, 
-            trust_remote_code=trust_remote_code, 
+            device='balanced',
+            torch_dtype=torch_dtype,
+            trust_remote_code=trust_remote_code,
             safetensors=safetensors,
-            is_quantized=False
+            is_quantized=False,
         )
 
     @classmethod
-    def from_quantized(self, model_path, model_type, model_filename='', 
-                             max_new_tokens=None, device='balanced', torch_dtype=torch.float16, 
-                             trust_remote_code=True, safetensors=False, is_quantized=True, 
-                             fuse_layers=False, version='GEMM'):
+    def from_quantized(cls, model_path, model_type, model_filename='', max_new_tokens=None, device='balanced', torch_dtype=torch.float16, trust_remote_code=True, safetensors=False, is_quantized=True, fuse_layers=False, version='GEMM'):
         # [STEP 1] Download model if path is not a directory
         if not os.path.isdir(model_path):
             ignore_patterns = ["*msgpack*", "*h5*"]
@@ -303,11 +300,11 @@ class BaseAWQForCausalLM(nn.Module):
                 ignore_patterns.extend(["*.pt*", "*.bin*"])
             else:
                 ignore_patterns.append("*.safetensors*")
-            
+
             model_path = snapshot_download(model_path, ignore_patterns=ignore_patterns)
-        
+
         if model_filename != '':
-            model_weights_path = model_path + f'/{model_filename}'
+            model_weights_path = f'{model_path}/{model_filename}'
         else:
             model_weights_path = model_path
 
@@ -317,37 +314,35 @@ class BaseAWQForCausalLM(nn.Module):
         if os.path.exists(quant_config_path):
             with open(quant_config_path, 'r') as file:
                 quant_config = json.loads(file.read())
-            
+
             if "version" not in quant_config.keys():
                 quant_config["version"] = version
         else:
             # Default config that works for most models
             quant_config = {"zero_point": True, "q_group_size": 128, "w_bit": 4, "version": version}
-        
+
         # Load model config and set max generation length
-        if max_new_tokens is None and hasattr(self, 'max_new_tokens_key'):
+        if max_new_tokens is None and hasattr(cls, 'max_new_tokens_key'):
             config = AutoConfig.from_pretrained(model_path, trust_remote_code=trust_remote_code)
-            config.max_new_tokens = getattr(config, self.max_new_tokens_key)
+            config.max_new_tokens = getattr(config, cls.max_new_tokens_key)
         else:
             max_new_tokens = 2048 if max_new_tokens is None else max_new_tokens
             config = AutoConfig.from_pretrained(model_path, trust_remote_code=trust_remote_code)
             config.max_new_tokens = max_new_tokens
-        
+
         # [STEP 3] Load model
         with init_empty_weights():
             model = AutoModelForCausalLM.from_config(config=config, torch_dtype=torch_dtype, trust_remote_code=trust_remote_code)
-        
+
         # Only need to replace layers if a model is AWQ quantized
         if is_quantized:
             # Prepare WQLinear layers, replace nn.Linear
-            self._load_quantized_modules(self, model, quant_config, quant_config["version"])
-        
+            cls._load_quantized_modules(cls, model, quant_config, quant_config["version"])
+
         model.tie_weights()
 
         device_map = infer_auto_device_map(
-            model,
-            no_split_module_classes=[self.layer_type], 
-            dtype=torch_dtype
+            model, no_split_module_classes=[cls.layer_type], dtype=torch_dtype
         )
 
         # Load model weights
@@ -357,16 +352,16 @@ class BaseAWQForCausalLM(nn.Module):
                 checkpoint=model_weights_path,
                 device_map=device_map
             )
-            
+
             model = simple_dispatch_model(model, device_map)
-            
+
             if fuse_layers:
-                self.fuse_layers(model, quant_config)
+                cls.fuse_layers(model, quant_config)
 
         else:
             # If not quantized, must load with AutoModelForCausalLM
             del model
-            
+
             # Load model weights
             model = AutoModelForCausalLM.from_pretrained(
                 model_weights_path, 
@@ -379,7 +374,9 @@ class BaseAWQForCausalLM(nn.Module):
             )
             model.eval()
 
-        return self(model, model_type, is_quantized=is_quantized, quant_config=quant_config)
+        return cls(
+            model, model_type, is_quantized=is_quantized, quant_config=quant_config
+        )
 
     def _load_quantized_modules(self, model, quant_config, version):
         # Real quantization of weights
