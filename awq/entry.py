@@ -85,7 +85,7 @@ def run_speed(model_path, quant_file, device, n_generate=128, n_context=256, bat
         torch.mm(warm_up,warm_up)
 
     if quant_file:
-        fuse_layers = False if disable_fused_layers else True
+        fuse_layers = not disable_fused_layers
         model, load_time = _timer(lambda: AutoAWQForCausalLM.from_quantized(model_path, quant_file, fuse_layers=fuse_layers))
     else:
         model, load_time = _timer(lambda: AutoAWQForCausalLM.from_pretrained(model_path))

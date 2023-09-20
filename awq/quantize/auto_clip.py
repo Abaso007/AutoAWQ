@@ -75,7 +75,7 @@ def auto_clip_block(module,
     clip_list = []
     for name in named_linears:
         # due to qk bmm, it is hard to clip precisely
-        if any([_ in name for _ in ["q_", "k_", "query", "key", "Wqkv"]]):
+        if any(_ in name for _ in ["q_", "k_", "query", "key", "Wqkv"]):
             continue
         named_linears[name].cuda()
         max_val = auto_clip_layer(

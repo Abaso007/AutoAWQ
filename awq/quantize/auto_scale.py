@@ -171,7 +171,11 @@ def auto_scale_block(awq_model,
         scales = _search_module_scale(module2inspect, layers, inp, kwargs)
         scales = scales.detach().cpu()
         # prev_op_name, [layer_name], scale
-        return (get_op_name(module, prev_op), tuple([get_op_name(module, m) for m in layers]), scales)
+        return (
+            get_op_name(module, prev_op),
+            tuple(get_op_name(module, m) for m in layers),
+            scales,
+        )
 
     layers: list[dict] = awq_model.get_layers_for_scaling(
         module, input_feat, module_kwargs
